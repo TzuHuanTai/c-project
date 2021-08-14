@@ -1,0 +1,50 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "C/C++: g++.exe build active file",
+			// "command": "C:/Program Files/mingw-w64/x86_64-8.1.0-posix-seh-rt_v6-rev0/mingw64/bin/g++.exe",
+			// "command": "C:/MinGW64/bin/g++.exe",
+			"command": "C:\\Program Files\\mingw-w64\\x86_64-8.1.0-win32-seh-rt_v6-rev0\\mingw64\\bin\\g++.exe",
+			"args": [
+				"-g",
+				"${file}",
+				"-o",
+				"${fileDirname}\\${fileBasenameNoExtension}.exe",
+				"-I","D:\\lib\\opencv-build\\install\\include",
+				"-L","D:\\lib\\opencv-build\\install\\x64\\mingw\\bin",
+				"-I","C:\\Program Files (x86)\\Intel RealSense SDK 2.0\\include",
+                "-L","C:\\Program Files (x86)\\Intel RealSense SDK 2.0\\lib\\x64",
+                "-llibopencv_calib3d411",
+                "-llibopencv_core411",
+                "-llibopencv_dnn411",
+                "-llibopencv_features2d411",
+                "-llibopencv_flann411",
+				"-llibopencv_highgui411",
+                "-llibopencv_imgcodecs411",
+				"-llibopencv_imgproc411",
+				"-llibopencv_imgproc411",
+                "-llibopencv_ml411",
+                "-llibopencv_objdetect411",
+                "-llibopencv_photo411",
+                // "-llibopencv_shape411",
+                "-llibopencv_stitching411",
+                // "-llibopencv_superres411",
+                "-llibopencv_video411",
+                "-llibopencv_videoio411",
+                // "-llibopencv_videostab411"
+			],
+			"options": {
+				"cwd": "C:/MinGW64/bin"
+			},
+			"problemMatcher": [
+				
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+		}
+	]
+}
