@@ -74,6 +74,5 @@
         "mutex": "cpp",
         "thread": "cpp",
         "cinttypes": "cpp"
-    },
-    "C_Cpp.errorSquiggles": "Disabled"
+    }
 }

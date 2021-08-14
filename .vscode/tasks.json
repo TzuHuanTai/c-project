@@ -4,8 +4,6 @@
 		{
 			"type": "shell",
 			"label": "C/C++: g++.exe build active file",
-			// "command": "C:/Program Files/mingw-w64/x86_64-8.1.0-posix-seh-rt_v6-rev0/mingw64/bin/g++.exe",
-			// "command": "C:/MinGW64/bin/g++.exe",
 			"command": "C:\\Program Files\\mingw-w64\\x86_64-8.1.0-win32-seh-rt_v6-rev0\\mingw64\\bin\\g++.exe",
 			"args": [
 				"-g",
@@ -14,8 +12,8 @@
 				"${fileDirname}\\${fileBasenameNoExtension}.exe",
 				"-I","D:\\lib\\opencv-build\\install\\include",
 				"-L","D:\\lib\\opencv-build\\install\\x64\\mingw\\bin",
-				"-I","C:\\Program Files (x86)\\Intel RealSense SDK 2.0\\include",
-                "-L","C:\\Program Files (x86)\\Intel RealSense SDK 2.0\\lib\\x64",
+				"-I","C:\\ffmpeg\\include",
+                "-L","C:\\ffmpeg\\bin",
                 "-llibopencv_calib3d411",
                 "-llibopencv_core411",
                 "-llibopencv_dnn411",
@@ -36,7 +34,7 @@
                 // "-llibopencv_videostab411"
 			],
 			"options": {
-				"cwd": "C:/MinGW64/bin"
+				"cwd": "${fileDirname}"
 			},
 			"problemMatcher": [
 				

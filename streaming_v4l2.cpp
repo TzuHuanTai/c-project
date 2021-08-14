@@ -105,7 +105,7 @@ SwsContext *initialize_sample_scaler(AVCodecContext *in_codec_ctx, AVCodecContex
   return swsctx;
 }
 
-AVFrame *allocate_frame_buffer(AVCodecContext *codec_ctx, double width, double height)
+AVFrame *allocate_frame_buffer(AVCodecContext *codec_ctx, double width, double height, AVPacket *&pkt)
 {
   AVFrame *frame = av_frame_alloc();
 
@@ -119,73 +119,49 @@ AVFrame *allocate_frame_buffer(AVCodecContext *codec_ctx, double width, double h
   frame->format = static_cast<int>(codec_ctx->pix_fmt);
   frame->pts = 0;
 
+  pkt = av_packet_alloc();
+
   return frame;
 }
 
-void write_frame(AVCodecContext *codec_ctx, AVFormatContext *fmt_ctx, AVFrame *frame)
+void write_frame(AVCodecContext *encoder, AVFormatContext *fmt_ctx, AVFrame *frame, AVPacket *pkt)
 {
-  AVPacket pkt = {0};
-  av_init_packet(&pkt);
-
-  int ret = avcodec_send_frame(codec_ctx, frame);
+  int ret = avcodec_send_frame(encoder, frame);
   while (ret >= 0)
   {
-    ret = avcodec_receive_packet(codec_ctx, &pkt);
-    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+    ret = avcodec_receive_packet(encoder, pkt);
+    if (ret == AVERROR(EAGAIN))
     {
       break;
     }
     else if (ret < 0)
     {
       cout << "Error encoding frame from codec context!" << endl;
+      break;
     }
 
-    av_interleaved_write_frame(fmt_ctx, &pkt);
-    av_packet_unref(&pkt);
+    av_interleaved_write_frame(fmt_ctx, pkt);
+    av_packet_unref(pkt);
   }
 }
 
-void read_frame(AVFormatContext *&input_format_context, AVCodecContext *&input_codec_context, AVFrame *&frame)
+void read_frame(AVFormatContext *&fmt_ctx, AVCodecContext *&decoder, AVFrame *&frame, AVPacket *pkt)
 {
-  int ret = 0;
-  AVPacket pkt = {0};
-  av_init_packet(&pkt);
-  pkt.data = NULL;
-  pkt.size = 0;
+  int ret = av_read_frame(fmt_ctx, pkt);
 
-  ret = av_read_frame(input_format_context, &pkt);
-  while (ret >= 0)
+  ret = avcodec_send_packet(decoder, pkt);
+  if (ret < 0)
   {
-    ret = avcodec_send_packet(input_codec_context, &pkt);
-    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-    {
-      break;
-    }
-    else if (ret < 0)
-    {
-      cout << "Error decoding packet!" << endl;
-      break;
-    }
-
-    while (ret >= 0)
-    {
-      ret = avcodec_receive_frame(input_codec_context, frame);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-      {
-        break;
-      }
-      else if (ret < 0)
-      {
-        cout << "Error decoding frame from codec context!" << endl;
-        break;
-      }
-
-      av_packet_unref(&pkt);
-      return;
-    }
+    cout << "Error decoding packet!" << endl;
   }
 
-  av_packet_unref(&pkt);
+  ret = avcodec_receive_frame(decoder, frame);
+  if (ret < 0 && ret != AVERROR(EAGAIN))
+  {
+    cout << "Error decoding frame from codec context!" << endl;
+  }
+
+  av_packet_unref(pkt);
 }
 
 void initialize_v4l2_context(AVFormatContext *&ifmt_ctx, AVCodecContext *&decoder_ctx, const char *input_format,
@@ -248,6 +224,8 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   AVStream *out_stream = nullptr;
   AVCodecContext *in_codec_ctx = nullptr;
   AVCodecContext *out_codec_ctx = nullptr;
+  AVPacket *in_pkt = nullptr;
+  AVPacket *out_pkt = nullptr;
 
   cout << " ==== initialize v4l2 input... ====" << endl;
   initialize_v4l2_context(ifmt_ctx, in_codec_ctx, "video4linux2", dev_name, fps, width, height);
@@ -268,8 +246,8 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   av_dump_format(ofmt_ctx, 0, output, 1);
 
   cout << "==== initailizw others ====" << endl;
-  auto *in_frame = allocate_frame_buffer(in_codec_ctx, width, height);
-  auto *out_frame = allocate_frame_buffer(out_codec_ctx, width, height);
+  auto *in_frame = allocate_frame_buffer(in_codec_ctx, width, height, in_pkt);
+  auto *out_frame = allocate_frame_buffer(out_codec_ctx, width, height, out_pkt);
   auto *swsctx = initialize_sample_scaler(in_codec_ctx, out_codec_ctx, width, height);
 
   // ==== start push streaming ====
@@ -287,17 +265,19 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   const int sleep_time = av_rescale_q(1, out_codec_ctx->time_base, out_stream->time_base) * 1000 / 3;
   uint64_t frame_count = 0;
 
+  cout << "sleep_time: " << sleep_time << endl;
+
   do
   {
     if (av_gettime() >= (out_frame->pts * 1000) + init_video_time)
     {
-      read_frame(ifmt_ctx, in_codec_ctx, in_frame);
+      read_frame(ifmt_ctx, in_codec_ctx, in_frame, in_pkt);
 
       sws_scale(swsctx, (uint8_t const **)in_frame->data, in_frame->linesize, 0, height, out_frame->data, out_frame->linesize);
 
       out_frame->pts = av_rescale_q(++frame_count, out_codec_ctx->time_base, out_stream->time_base);
 
-      write_frame(out_codec_ctx, ofmt_ctx, out_frame);
+      write_frame(out_codec_ctx, ofmt_ctx, out_frame, out_pkt);
     }
     else
     {
@@ -307,11 +287,13 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
 
   av_write_trailer(ofmt_ctx);
 
+  av_packet_free(&in_pkt);
+  av_packet_free(&out_pkt);
   av_frame_free(&in_frame);
   av_frame_free(&out_frame);
   avcodec_close(in_codec_ctx);
-  avformat_free_context(ifmt_ctx);
   avcodec_close(out_codec_ctx);
+  avformat_free_context(ifmt_ctx);
   avformat_free_context(ofmt_ctx);
 }
 
