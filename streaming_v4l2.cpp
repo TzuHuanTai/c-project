@@ -18,6 +18,7 @@ extern "C"
 // v4l2-ctl --list-devices
 
 using namespace std;
+uint64_t frame_count = 0;
 
 void initialize_avformat_context(AVFormatContext *&fctx, const char *format_name)
 {
@@ -105,7 +106,7 @@ SwsContext *initialize_sample_scaler(AVCodecContext *in_codec_ctx, AVCodecContex
   return swsctx;
 }
 
-AVFrame *allocate_frame_buffer(AVCodecContext *codec_ctx, double width, double height, AVPacket *&pkt)
+AVFrame *allocate_frame_buffer(AVCodecContext *codec_ctx, double width, double height)
 {
   AVFrame *frame = av_frame_alloc();
 
@@ -118,8 +119,6 @@ AVFrame *allocate_frame_buffer(AVCodecContext *codec_ctx, double width, double h
   frame->height = height;
   frame->format = static_cast<int>(codec_ctx->pix_fmt);
   frame->pts = 0;
-
-  pkt = av_packet_alloc();
 
   return frame;
 }
@@ -139,6 +138,8 @@ void write_frame(AVCodecContext *encoder, AVFormatContext *fmt_ctx, AVFrame *fra
       cout << "Error encoding frame from codec context!" << endl;
       break;
     }
+
+    pkt->pts = pkt->dts = av_rescale_q(frame_count, encoder->time_base, fmt_ctx->streams[0]->time_base);
 
     av_interleaved_write_frame(fmt_ctx, pkt);
     av_packet_unref(pkt);
@@ -224,8 +225,6 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   AVStream *out_stream = nullptr;
   AVCodecContext *in_codec_ctx = nullptr;
   AVCodecContext *out_codec_ctx = nullptr;
-  AVPacket *in_pkt = nullptr;
-  AVPacket *out_pkt = nullptr;
 
   cout << " ==== initialize v4l2 input... ====" << endl;
   initialize_v4l2_context(ifmt_ctx, in_codec_ctx, "video4linux2", dev_name, fps, width, height);
@@ -245,10 +244,10 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   av_dump_format(ifmt_ctx, 0, dev_name, 0);
   av_dump_format(ofmt_ctx, 0, output, 1);
 
-  cout << "==== initailizw others ====" << endl;
-  auto *in_frame = allocate_frame_buffer(in_codec_ctx, width, height, in_pkt);
-  auto *out_frame = allocate_frame_buffer(out_codec_ctx, width, height, out_pkt);
-  auto *swsctx = initialize_sample_scaler(in_codec_ctx, out_codec_ctx, width, height);
+  cout << "==== initailize others ====" << endl;
+  auto in_pkt = av_packet_alloc();
+  auto out_pkt = av_packet_alloc();
+  auto *in_frame = allocate_frame_buffer(in_codec_ctx, width, height);
 
   // ==== start push streaming ====
   cout << "Begin push streaming!" << endl;
@@ -263,21 +262,18 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   int64_t video_duration = 0;
   int64_t init_video_time = av_gettime();
   const int sleep_time = av_rescale_q(1, out_codec_ctx->time_base, out_stream->time_base) * 1000 / 3;
-  uint64_t frame_count = 0;
 
   cout << "sleep_time: " << sleep_time << endl;
 
   do
   {
-    if (av_gettime() >= (out_frame->pts * 1000) + init_video_time)
+    if (av_gettime() >= video_duration + init_video_time)
     {
       read_frame(ifmt_ctx, in_codec_ctx, in_frame, in_pkt);
 
-      sws_scale(swsctx, (uint8_t const **)in_frame->data, in_frame->linesize, 0, height, out_frame->data, out_frame->linesize);
+      write_frame(out_codec_ctx, ofmt_ctx, in_frame, out_pkt);
 
-      out_frame->pts = av_rescale_q(++frame_count, out_codec_ctx->time_base, out_stream->time_base);
-
-      write_frame(out_codec_ctx, ofmt_ctx, out_frame, out_pkt);
+      video_duration = av_rescale_q(++frame_count, out_codec_ctx->time_base, out_stream->time_base) * 1000;
     }
     else
     {
@@ -290,7 +286,6 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   av_packet_free(&in_pkt);
   av_packet_free(&out_pkt);
   av_frame_free(&in_frame);
-  av_frame_free(&out_frame);
   avcodec_close(in_codec_ctx);
   avcodec_close(out_codec_ctx);
   avformat_free_context(ifmt_ctx);
