@@ -19,6 +19,7 @@ extern "C"
 
 using namespace std;
 uint64_t frame_count = 0;
+uint64_t video_stream_index = 0;
 
 void initialize_avformat_context(AVFormatContext *&fctx, const char *format_name)
 {
@@ -41,7 +42,7 @@ void initialize_io_context(AVFormatContext *&fctx, const char *output)
   }
 }
 
-void set_codec_params(AVFormatContext *&fctx, AVCodecContext *&codec_ctx, double width, double height, int fps)
+void set_codec_params(AVFormatContext *&fctx, AVCodecContext *&codec_ctx, double width, double height, int fps, int bit_rate = 6000000)
 {
   const AVRational dst_fps = {fps, 1};
 
@@ -50,7 +51,7 @@ void set_codec_params(AVFormatContext *&fctx, AVCodecContext *&codec_ctx, double
   codec_ctx->codec_type = AVMEDIA_TYPE_VIDEO;
   codec_ctx->width = width;
   codec_ctx->height = height;
-  codec_ctx->bit_rate = 6000000;
+  codec_ctx->bit_rate = bit_rate;
   codec_ctx->gop_size = 12;
   codec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
   codec_ctx->framerate = dst_fps;
@@ -165,16 +166,16 @@ void read_frame(AVFormatContext *&fmt_ctx, AVCodecContext *&decoder, AVFrame *&f
   av_packet_unref(pkt);
 }
 
-void initialize_v4l2_context(AVFormatContext *&ifmt_ctx, AVCodecContext *&decoder_ctx, const char *input_format,
+void initialize_v4l2_context(AVFormatContext *&in_fmt_ctx, AVCodecContext *&decoder_ctx, const char *input_format,
                              const char *dev_name, int fps, int width, int height)
 {
-  ifmt_ctx = avformat_alloc_context();
-  if (!ifmt_ctx)
+  in_fmt_ctx = avformat_alloc_context();
+  if (!in_fmt_ctx)
   {
     av_log(0, AV_LOG_ERROR, "Cannot allocate input format (Out of memory?)\n");
     exit(1);
   }
-  ifmt_ctx->flags |= AVFMT_FLAG_NONBLOCK; // Enable non-blocking mode
+  in_fmt_ctx->flags |= AVFMT_FLAG_NONBLOCK; // Enable non-blocking mode
 
   AVDictionary *options = NULL;
   stringstream framesize;
@@ -190,7 +191,7 @@ void initialize_v4l2_context(AVFormatContext *&ifmt_ctx, AVCodecContext *&decode
   }
 
   // open input file, and allocate format context
-  if (avformat_open_input(&ifmt_ctx, dev_name, ifmt, &options) < 0)
+  if (avformat_open_input(&in_fmt_ctx, dev_name, ifmt, &options) < 0)
   {
     av_log(0, AV_LOG_ERROR, "Could not open source %s\n", dev_name);
     exit(1);
@@ -198,70 +199,70 @@ void initialize_v4l2_context(AVFormatContext *&ifmt_ctx, AVCodecContext *&decode
 
   AVCodec *decoder = NULL;
 
-  cout << "v4l2 number of streams: " << ifmt_ctx->nb_streams << endl;
-  for (int i = 0; i < ifmt_ctx->nb_streams; i++)
+  cout << "v4l2 number of streams: " << in_fmt_ctx->nb_streams << endl;
+  for (int i = 0; i < in_fmt_ctx->nb_streams; i++)
   {
-    cout << "v4l2 type: " << ifmt_ctx->streams[i]->codecpar->codec_type << endl;
-    cout << "v4l2 id: " << ifmt_ctx->streams[i]->codecpar->codec_id << endl;
+    cout << "v4l2 type: " << in_fmt_ctx->streams[i]->codecpar->codec_type << endl;
+    cout << "v4l2 id: " << in_fmt_ctx->streams[i]->codecpar->codec_id << endl;
   }
 
-  int video_stream_index = av_find_best_stream(ifmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
+  video_stream_index = av_find_best_stream(in_fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
   cout << "v4l2 find best video stream: " << video_stream_index << endl;
 
-  auto codec_par = ifmt_ctx->streams[video_stream_index]->codecpar;
+  auto codec_par = in_fmt_ctx->streams[video_stream_index]->codecpar;
   decoder_ctx = avcodec_alloc_context3(decoder);
   avcodec_parameters_to_context(decoder_ctx, codec_par);
   avcodec_open2(decoder_ctx, decoder, NULL);
 }
 
-void stream_video(double width, double height, int fps, const char *dev_name, const char *output, const char *encoder_name)
+void stream_video(double width, double height, int fps, const char *dev_name, const char *out_url,
+                  const char *encoder_name, const char *out_format)
 {
   avformat_network_init();
   avdevice_register_all();
 
-  AVFormatContext *ifmt_ctx = nullptr;
-  AVFormatContext *ofmt_ctx = nullptr;
+  AVFormatContext *in_fmt_ctx = nullptr;
+  AVFormatContext *out_fmt_ctx = nullptr;
   AVCodec *out_codec = nullptr;
   AVStream *out_stream = nullptr;
   AVCodecContext *in_codec_ctx = nullptr;
   AVCodecContext *out_codec_ctx = nullptr;
 
-  cout << " ==== initialize v4l2 input... ====" << endl;
-  initialize_v4l2_context(ifmt_ctx, in_codec_ctx, "video4linux2", dev_name, fps, width, height);
+  cout << " ==== Initialize v4l2 input... ====" << endl;
+  initialize_v4l2_context(in_fmt_ctx, in_codec_ctx, "video4linux2", dev_name, fps, width, height);
 
-  cout << "==== initailize flv output... ====" << endl;
-  initialize_avformat_context(ofmt_ctx, "flv");
-  initialize_io_context(ofmt_ctx, output);
+  cout << "==== Initailize flv output... ====" << endl;
+  initialize_avformat_context(out_fmt_ctx, out_format);
+  initialize_io_context(out_fmt_ctx, out_url);
 
   out_codec = avcodec_find_encoder_by_name(encoder_name);
-  out_stream = avformat_new_stream(ofmt_ctx, out_codec);
+  out_stream = avformat_new_stream(out_fmt_ctx, out_codec);
   out_codec_ctx = avcodec_alloc_context3(out_codec);
 
-  set_codec_params(ofmt_ctx, out_codec_ctx, width, height, fps);
+  set_codec_params(out_fmt_ctx, out_codec_ctx, width, height, fps);
   initialize_codec_stream(out_stream, out_codec_ctx, out_codec, fps);
 
-  cout << "==== show info ====" << endl;
-  av_dump_format(ifmt_ctx, 0, dev_name, 0);
-  av_dump_format(ofmt_ctx, 0, output, 1);
+  cout << "==== Show info ====" << endl;
+  av_dump_format(in_fmt_ctx, 0, dev_name, 0);
+  av_dump_format(out_fmt_ctx, 0, out_url, 1);
 
-  cout << "==== initailize others ====" << endl;
+  cout << "==== Initailize others ====" << endl;
   auto in_pkt = av_packet_alloc();
   auto out_pkt = av_packet_alloc();
   auto *in_frame = allocate_frame_buffer(in_codec_ctx, width, height);
 
   // ==== start push streaming ====
-  cout << "Begin push streaming!" << endl;
+  cout << "==== Begin push streaming! ====" << endl;
 
-  if (avformat_write_header(ofmt_ctx, nullptr) < 0)
+  if (avformat_write_header(out_fmt_ctx, nullptr) < 0)
   {
     cout << "Could not write header!" << endl;
     exit(1);
   }
 
-  bool end_of_stream = false;
   int64_t video_duration = 0;
   int64_t init_video_time = av_gettime();
-  const int sleep_time = av_rescale_q(1, out_codec_ctx->time_base, out_stream->time_base) * 1000 / 3;
+  const int sleep_time = av_rescale_q(1, out_codec_ctx->time_base, in_fmt_ctx->streams[video_stream_index]->time_base) / 3;
 
   cout << "sleep_time: " << sleep_time << endl;
 
@@ -269,27 +270,27 @@ void stream_video(double width, double height, int fps, const char *dev_name, co
   {
     if (av_gettime() >= video_duration + init_video_time)
     {
-      read_frame(ifmt_ctx, in_codec_ctx, in_frame, in_pkt);
+      read_frame(in_fmt_ctx, in_codec_ctx, in_frame, in_pkt);
 
-      write_frame(out_codec_ctx, ofmt_ctx, in_frame, out_pkt);
+      write_frame(out_codec_ctx, out_fmt_ctx, in_frame, out_pkt);
 
-      video_duration = av_rescale_q(++frame_count, out_codec_ctx->time_base, out_stream->time_base) * 1000;
+      video_duration = av_rescale_q(++frame_count, out_codec_ctx->time_base, in_fmt_ctx->streams[video_stream_index]->time_base);
     }
     else
     {
       av_usleep(sleep_time);
     }
-  } while (!end_of_stream);
+  } while (true);
 
-  av_write_trailer(ofmt_ctx);
+  av_write_trailer(out_fmt_ctx);
 
   av_packet_free(&in_pkt);
   av_packet_free(&out_pkt);
   av_frame_free(&in_frame);
   avcodec_close(in_codec_ctx);
   avcodec_close(out_codec_ctx);
-  avformat_free_context(ifmt_ctx);
-  avformat_free_context(ofmt_ctx);
+  avformat_free_context(in_fmt_ctx);
+  avformat_free_context(out_fmt_ctx);
 }
 
 int main(int argc, char *argv[])
@@ -303,12 +304,13 @@ int main(int argc, char *argv[])
   double width = 1280, height = 720;
   int fps = 30;
   const char *dev_name = "/dev/video0";
-  const char *output = "rtmp://192.168.42.25/live/zero"; //"udp://192.168.37.25:12345"; //"rtmp://localhost/live/test";
-  const char *encoder_name = "h264_omx";                 //"libx264", "h264_omx";
+  const char *out_format = "h264";
+  const char *out_url = "udp://192.168.212.25:12345"; //"udp://192.168.37.25:12345"; //"rtmp://localhost/live/test";
+  const char *encoder_name = "h264_omx";              //"libx264", "h264_omx";
 
   try
   {
-    stream_video(width, height, fps, dev_name, output, encoder_name);
+    stream_video(width, height, fps, dev_name, out_url, encoder_name, out_format);
   }
   catch (exception &e)
   {
