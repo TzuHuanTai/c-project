@@ -304,7 +304,7 @@ int main(int argc, char *argv[])
   double width = 1280, height = 720;
   int fps = 30;
   const char *dev_name = "/dev/video0";
-  const char *out_format = "h264";
+  const char *out_format = "h264"; //"flv"
   const char *out_url = "udp://192.168.212.25:12345"; //"udp://192.168.37.25:12345"; //"rtmp://localhost/live/test";
   const char *encoder_name = "h264_omx";              //"libx264", "h264_omx";
 
